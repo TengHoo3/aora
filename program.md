@@ -6,17 +6,49 @@ This is an experiment to have an LLM agent do its own data science research.
 
 To set up a new experiment, work with the user to:
 
-1. **Agree on a run tag**: propose a tag based on the dataset and today's date (e.g. `titanic-apr1`). The branch `autoresearch/<tag>` must not already exist — this is a fresh run.
-2. **Create the branch**: `git checkout -b autoresearch/<tag>` from current master.
-3. **Verify data exists**: Check that `data/` contains a CSV or Parquet file. If not, tell the human to place their dataset there.
+1. **Agree on a task name** with the user (e.g. `titanic`, `housing-prices`). You will use this to create a unique task directory.
+
+2. **Create a task directory** with the format `tasks/<taskname>_<YYYYMMDD_HHMMSS>/`:
+   ```
+   tasks/titanic_20260404_143022/
+   ├── pipeline.py      ← copy from repo root (your working copy)
+   ├── train.py         ← copy from repo root
+   ├── eda_report.md    ← generated here
+   └── results.tsv      ← experiment log for this task
+   ```
+   Copy `pipeline.py` and `train.py` from the repo root into this directory as the starting point. All your edits and results for this task stay in this directory — never in the root files.
+
+3. **Verify data exists**: Check that `data/` contains a CSV or Parquet file.
+
 4. **Read the in-scope files in full**:
    - `README.md` — repository context and design.
-   - `prepare.py` — fixed constants, auto-detection logic, evaluation harness. **Do not modify.**
-   - `pipeline.py` — your primary experiment file. Preprocessing, model, training loop.
-   - `eda_report.md` — generated EDA report (if it exists). This is your primary source of domain knowledge about the dataset. If it doesn't exist, run `uv run prepare.py` first.
-   - `train.py` — neural network fallback. Read it but **do not run or modify** until pipeline.py has been exhausted (see Neural Network Fallback section).
-5. **Initialize results.tsv**: Create `results.tsv` with just the header row.
-6. **Confirm and go**: Confirm setup looks good, then kick off experimentation.
+   - `prepare.py` — fixed constants, auto-detection logic, evaluation harness. **Do not modify. Ever.**
+   - `tasks/<taskname>_<datetime>/pipeline.py` — your working copy for this task.
+   - `tasks/<taskname>_<datetime>/train.py` — neural network fallback for this task.
+   - `tasks/<taskname>_<datetime>/eda_report.md` — if it exists. If not, run `uv run prepare.py` from the repo root first, then copy the generated file into your task directory.
+
+5. **Initialize results.tsv**: Create `tasks/<taskname>_<datetime>/results.tsv` with just the header row:
+   ```
+   commit	score	model_type	status	description
+   ```
+
+6. **Confirm and go**: Confirm the task directory is set up, then kick off experimentation.
+
+### Task directory rules
+- **You only edit files inside your task directory.** Never edit `pipeline.py` or `train.py` in the repo root.
+- `prepare.py` in the repo root is the single fixed harness for all tasks. Always run it from the repo root: `uv run prepare.py`.
+- All experiment runs use the task-directory copies: `uv run tasks/<taskname>_<datetime>/pipeline.py`.
+- At the end of a good run, record the result in the task's `results.tsv`. The best `pipeline.py` naturally persists in the task directory.
+- To **resume** a past task: read its task directory and `results.tsv` to understand where you left off.
+
+### train.py escalation (MPS)
+`train.py` uses Apple Metal (MPS) and cannot run inside OpenClaw's sandbox. Call the host bridge instead:
+```bash
+curl -s -X POST http://host.docker.internal:8765/run_train
+# Results written to tasks/<taskname>_<datetime>/run.log
+# Read score:
+curl -s http://host.docker.internal:8765/score
+```
 
 ## Experimentation
 
@@ -150,22 +182,47 @@ e5f6g7h	0.000000	XGBClassifier	crash	XGB param error
 f6g7h8i	0.689000	TabularMLP(256-128-64)	discard	neural fallback — worse than RF
 ```
 
+## Running Experiments
+
+All experiments run from the **repo root** (so `prepare.py` and `data/` are always accessible). The active files are inside your task directory.
+
+```bash
+# pipeline.py (OpenClaw sandbox handles isolation)
+uv run tasks/<taskname>_<datetime>/pipeline.py \
+    > tasks/<taskname>_<datetime>/run.log 2>&1
+
+# Read score
+grep "^score:\|^model_type:" tasks/<taskname>_<datetime>/run.log
+
+# train.py (MPS — always via host bridge, not directly)
+curl -s -X POST http://host.docker.internal:8765/run_train
+curl -s http://host.docker.internal:8765/score
+```
+
 ## The Experiment Loop
 
 The experiment runs on a dedicated branch (e.g. `autoresearch/titanic-apr1`).
 
-LOOP FOREVER:
+LOOP FOREVER (working inside `tasks/<taskname>_<datetime>/`):
 
-1. Look at the git state: current branch/commit
-2. Read `eda_report.md` to stay grounded in the dataset characteristics
-3. Tune the active experiment file (`pipeline.py` or `train.py`) with an idea
-4. `git commit`
-5. Run: `uv run pipeline.py > run.log 2>&1` (or `uv run train.py > run.log 2>&1` if escalated)
-6. Read results: `grep "^score:\|^model_type:" run.log`
-7. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` and attempt a fix.
-8. Record results in `results.tsv`
-9. If `score` improved (higher), keep the commit and advance
-10. If `score` is equal or worse, `git reset` to discard and revert
+1. Read `tasks/<taskname>_<datetime>/eda_report.md` to stay grounded in the dataset.
+2. Tune `tasks/<taskname>_<datetime>/pipeline.py` with an experimental idea.
+3. **Run the experiment** (from the repo root so `prepare.py` and `data/` are accessible):
+   ```bash
+   uv run tasks/<taskname>_<datetime>/pipeline.py > tasks/<taskname>_<datetime>/run.log 2>&1
+   ```
+   For `train.py` escalation (MPS, runs on host via bridge):
+   ```bash
+   curl -s -X POST http://host.docker.internal:8765/run_train
+   ```
+4. **Read results:**
+   ```bash
+   grep "^score:\|^model_type:" tasks/<taskname>_<datetime>/run.log
+   ```
+5. If grep output is empty, the run crashed. Read `tail -n 50 tasks/<taskname>_<datetime>/run.log` and fix.
+6. Record result in `tasks/<taskname>_<datetime>/results.tsv`.
+7. If `score` improved, keep the edit and advance.
+8. If `score` is equal or worse, revert `pipeline.py` in the task directory to its previous state.
 
 **Timeout**: If a run exceeds 10 minutes, kill it, treat as failure, and revert. This usually means your hyperparameter search `n_iter` is too high or your CV folds are too many — reduce them.
 

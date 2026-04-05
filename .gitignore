@@ -70,6 +70,28 @@ node_modules/
 *.swp
 *.swo
 
+# Outputs
+outputs/
+
+# host_bridge
+bridge.log
+
+# Task run artifacts (keep pipeline.py/train.py/results.tsv, ignore logs/data)
+tasks/*/run.log
+tasks/*/eda_report.md
+tasks/*/data/
+
+# OpenClaw
+*openclaw*
+.*
+memory/*
+TOOLS.md
+USER.md
+SOUL.md
+HEARTBEAT.md
+IDENTITY.md
+AGENTS.md
+
 # Temp
 tmp/
 temp/
