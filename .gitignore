@@ -85,6 +85,14 @@ tasks/*/data/
 *openclaw*
 .*
 memory/*
+
+# Sandbox runtime (bind-mounted into Docker, persist on host, not tracked in git)
+.bin/
+.venv-linux/
+.libs/
+.uv-cache/
+.uv-python/
+.matplotlib/
 TOOLS.md
 USER.md
 SOUL.md

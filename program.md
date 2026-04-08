@@ -1,4 +1,4 @@
-# autoresearch-ds
+# aora
 
 This is an experiment to have an LLM agent do its own data science research.
 
@@ -34,12 +34,16 @@ To set up a new experiment, work with the user to:
 
 6. **Confirm and go**: Confirm the task directory is set up, then kick off experimentation.
 
+### ABOUT DATASET
+<Insert details about your dataset>
+
 ### Task directory rules
 - **You only edit files inside your task directory.** Never edit `pipeline.py` or `train.py` in the repo root.
 - `prepare.py` in the repo root is the single fixed harness for all tasks. Always run it from the repo root: `uv run prepare.py`.
 - All experiment runs use the task-directory copies: `uv run tasks/<taskname>_<datetime>/pipeline.py`.
 - At the end of a good run, record the result in the task's `results.tsv`. The best `pipeline.py` naturally persists in the task directory.
 - To **resume** a past task: read its task directory and `results.tsv` to understand where you left off.
+- **NEVER** read directly from any csv from data directory (as the data will be too large to read)
 
 ### train.py escalation (MPS)
 `train.py` uses Apple Metal (MPS) and cannot run inside OpenClaw's sandbox. Call the host bridge instead:
@@ -120,6 +124,75 @@ Each experiment runs from scratch: preprocess → train → evaluate. Since the 
 - `DROPOUT`, `LR`, `WEIGHT_DECAY`, `BATCH_SIZE`
 - The `TabularMLP` class: add residual connections, attention, entity embeddings for categoricals
 
+## Compute Budget & Safety Rules
+
+These rules are non-negotiable. Violating them causes wasted runs, timeouts, and overfitting.
+
+### RULES (MUST FOLLOW)
+When running any exec tool, make sure. to set timeout to 900 (15 minutes - `exec timeout=900`)
+
+### 1. Pre-flight cost check (BEFORE every heavy search)
+
+Before running `RandomizedSearchCV` or any multi-config loop, estimate the cost:
+
+```python
+est_secs = _estimate_search_seconds(n_samples, n_estimators, cv_folds=max_cv, n_iter=max_iter)
+print(f"  Estimated search time: {est_secs:.0f}s")
+if est_secs > TIME_BUDGET * 0.7:
+    raise RuntimeError(f"Too heavy ({est_secs:.0f}s estimated). Reduce n_iter or n_estimators.")
+```
+
+**Hard limits by dataset size** (use `_size_caps(n_samples)` from the template):
+
+| Dataset size | max_estimators | max_iter | max_cv |
+|---|---|---|---|
+| > 500K rows | 150 | 5 | 3 |
+| 100K–500K rows | 300 | 10 | 3 |
+| 10K–100K rows | 500 | 20 | 5 |
+| < 10K rows | 1000 | 30 | 5 |
+
+If a run exceeds 10 minutes, kill it, log as crash, and reduce parameters.
+
+### 2. Prefer early stopping over large n_estimators
+
+For XGBoost and LightGBM, **always use early stopping** instead of guessing n_estimators:
+
+```python
+X_fit, X_val, y_fit, y_val = train_test_split(X_tr, y_train, test_size=0.15, random_state=RANDOM_STATE)
+model = xgb.XGBRegressor(
+    n_estimators=2000,           # high ceiling — early stopping handles the actual count
+    learning_rate=0.05,
+    max_depth=6,
+    early_stopping_rounds=50,    # stops when no improvement for 50 rounds
+    n_jobs=-1,
+    tree_method="hist",
+)
+model.fit(X_fit, y_fit, eval_set=[(X_val, y_val)], verbose=False)
+print(f"  Best iteration: {model.best_iteration}")
+```
+
+This avoids overfitting from too many trees *and* removes n_estimators as a hyperparameter to tune.
+
+### 3. Overfitting detection (AFTER every training run)
+
+The template's `_overfitting_check()` computes the train score vs CV mean gap. Rules:
+
+- `gap < 0.02` — good fit
+- `0.02 <= gap < 0.05` — mild overfitting, acceptable
+- `gap >= 0.05` — **overfitting: do not keep this model**. Fix before advancing:
+  - Reduce `max_depth` (try 4–6 instead of 10+)
+  - Increase regularization (`lambda`, `alpha`, `min_child_weight`, `C`)
+  - Lower `n_estimators` or rely on early stopping
+  - Add `subsample` and `colsample_bytree` (0.6–0.8)
+
+### 4. Regression metrics — look beyond r2
+
+r2 is the primary metric, but **always check RMSE and MAE** to understand absolute error magnitude. A model with r2=0.98 but RMSE=5.0 on a target ranging 0–10 is still bad. Report all three in the `---` block (the template does this automatically).
+
+When comparing experiments, a lower RMSE at equal r2 is always better.
+
+Look into the test accuracy to see if we have improved upon generalization. Fewer features to reach this target the better.
+
 ## Suggested Experiment Progression
 
 Follow this roughly; you don't need to be rigid, but starting from fundamentals prevents premature optimization:
@@ -146,7 +219,18 @@ training_seconds: 12.3
 total_seconds:    14.1
 n_features_used:  48
 n_features_orig:  30
+cv_mean:          0.841300
+train_score:      0.862100
+overfit_gap:      0.020800
 ```
+
+For regression tasks, two additional lines are appended:
+```
+rmse:             0.412300
+mae:              0.298100
+```
+
+**Reading the overfitting signal**: if `overfit_gap > 0.05`, the model is overfitting and the result should be `discard` regardless of the test score.
 
 Extract the key metric:
 
@@ -224,8 +308,10 @@ LOOP FOREVER (working inside `tasks/<taskname>_<datetime>/`):
 7. If `score` improved, keep the edit and advance.
 8. If `score` is equal or worse, revert `pipeline.py` in the task directory to its previous state.
 
-**Timeout**: If a run exceeds 10 minutes, kill it, treat as failure, and revert. This usually means your hyperparameter search `n_iter` is too high or your CV folds are too many — reduce them.
+**Timeout**: If a run exceeds 10 minutes, kill it, treat as failure, and revert. **Always run the pre-flight cost check before starting any search** — if `_estimate_search_seconds(...)` returns more than `TIME_BUDGET * 0.7`, reduce `n_iter`, `cv`, or `n_estimators` until it fits. The estimate is cheap; the wasted run is not.
 
 **Crashes**: Fix trivial errors (import, typo). If the idea is fundamentally broken (OOM, incompatible transformer), log "crash" and move on.
+
+**Summarized Results**: In each 'task', generate a summarized results once all experiements are finished to tell the user what were the steps taken, and reasons behind certain decisions (parameters, models selected, etc.). Be thorough and scientific about your decisions made and how you got to it so a data scientist can understand your decisions
 
 **NEVER STOP**: Once the experiment loop has begun, do NOT pause to ask the human if you should continue. Do NOT ask "should I keep going?" or "is this a good stopping point?". You are autonomous. If you run out of ideas, re-read `eda_report.md`, revisit near-misses in `results.tsv`, try combining previous winning approaches, or go deeper on the best model family's hyperparameters. The loop runs until the human interrupts you, period.

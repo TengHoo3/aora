@@ -26,7 +26,7 @@ warnings.filterwarnings("ignore")
 # Constants (fixed -- do not modify)
 # ---------------------------------------------------------------------------
 
-TIME_BUDGET = 300        # seconds per experiment (5 minutes)
+TIME_BUDGET = 600        # seconds per experiment (5 minutes)
 TEST_SIZE = 0.2          # fixed 80/20 train/test split
 RANDOM_STATE = 42        # global reproducibility seed
 DATA_DIR = "data"        # directory where the user places their data file
@@ -34,9 +34,7 @@ MAX_CARDINALITY = 50     # categorical features with more unique values get drop
 MOSTLY_MISSING_THRESHOLD = 0.6  # features with >60% missing values are flagged
 
 # Target column name candidates (checked in order, case-insensitive)
-TARGET_CANDIDATES = ["target", "label", "y", "class", "outcome", "response",
-                     "dependent", "output", "result", "survived", "churn",
-                     "price", "salary", "value", "score"]
+TARGET_CANDIDATES = ['Target']
 
 # ---------------------------------------------------------------------------
 # Data discovery

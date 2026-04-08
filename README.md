@@ -1,40 +1,40 @@
-# Aora (autoresearch for data science)
+# Aora (autoresearch for data science - Auto Optimization and Ready Analysis)
 
 Autonomous data science research agent. Drop in a dataset, let an AI agent run overnight, wake up to a log of experiments and (hopefully) a well-tuned model.
 
-Inspired by [autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karpathy — adapted from LLM pretraining research to the full tabular data science pipeline.
+Inspired by [autoresearch](https://github.com/karpathy/autoresearch) by Andrej Karpathy - adapted from LLM pretraining research to the full tabular data science pipeline.
 
 ## How it works
 
 The repo has four files that matter:
 
-- **`prepare.py`** — fixed constants, auto-detects task type and target column, provides a fixed train/test split, and computes evaluation metrics. **Not modified by agents.**
-- **`pipeline.py`** — the primary agent experiment file. Sklearn/XGBoost/LightGBM preprocessing, feature engineering, model selection, hyperparameter tuning. The agent starts here.
-- **`train.py`** — neural network fallback (PyTorch `TabularMLP`). Used **only** if `pipeline.py` cannot exceed the escalation threshold (f1_macro < 0.70 or r2 < 0.60 after full tuning).
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. This file is edited and iterated on by the human.
+- **`prepare.py`** - fixed constants, auto-detects task type and target column, provides a fixed train/test split, and computes evaluation metrics. **Not modified by agents.**
+- **`pipeline.py`** - the primary agent experiment file. Sklearn/XGBoost/LightGBM preprocessing, feature engineering, model selection, hyperparameter tuning. The agent starts here.
+- **`train.py`** - neural network fallback (PyTorch `TabularMLP`). Used **only** if `pipeline.py` cannot exceed the escalation threshold (f1_macro < 0.70 or r2 < 0.60 after full tuning).
+- **`program.md`** - baseline instructions for one agent. Point your agent here and let it go. This file is edited and iterated on by the human.
 
-The agent edits the active file, commits, runs it, checks if the score improved, keeps or discards, and repeats — exactly like the LLM pretraining version but for tabular ML.
+The agent edits the active file, commits, runs it, checks if the score improved, keeps or discards, and repeats - exactly like the LLM pretraining version but for tabular ML.
 
 ## Architecture
 
 ```mermaid
 graph TD
-    subgraph fixed ["prepare.py (FIXED — agent cannot modify)"]
+    subgraph fixed ["prepare.py (FIXED - agent cannot modify)"]
         DataLoad["load_data()"]
         AutoDetect["auto-detect target + task type"]
-        Split["get_train_test_split() — fixed seed 42"]
-        Eval["evaluate_pipeline() — fixed metric"]
+        Split["get_train_test_split() - fixed seed 42"]
+        Eval["evaluate_pipeline() - fixed metric"]
         EDA["generate_eda_report()"]
     end
 
-    subgraph tier1 ["pipeline.py (Tier 1 — always try first)"]
+    subgraph tier1 ["pipeline.py (Tier 1 - always try first)"]
         FeatEng["Feature Engineering"]
         ModelSel["Model Selection\n(sklearn / XGBoost / LightGBM)"]
         HyperTune["Hyperparameter Tuning / CV"]
         Fit1["Fit sklearn Pipeline"]
     end
 
-    subgraph tier2 ["train.py (Tier 2 — neural fallback only)"]
+    subgraph tier2 ["train.py (Tier 2 - neural fallback only)"]
         MLPArch["TabularMLP Architecture\n(BatchNorm → GELU → Dropout)"]
         TrainLoop["PyTorch Training Loop\n(early stopping, time budget)"]
         Wrapper["TorchTabularWrapper\n(sklearn-compatible)"]
@@ -109,7 +109,7 @@ HOST macOS
   ├── uv run host_bridge.py    ← MPS runner for train.py (port 8765)
   └── openclaw (on host)
         └── sandbox (Docker, managed by OpenClaw)
-                └── pipeline.py runs here — sees aora/ only
+                └── pipeline.py runs here - sees aora/ only
 ```
 
 ### One-time setup
@@ -134,7 +134,7 @@ uv run host_bridge.py          # Terminal 2
 curl http://localhost:8765/health
 ```
 
-OpenClaw picks up `openclaw.json` from the repo root automatically — workspace, sandbox, tool allow/deny, and blocked files are all configured there.
+OpenClaw picks up `openclaw.json` from the repo root automatically - workspace, sandbox, tool allow/deny, and blocked files are all configured there.
 
 ### Security boundaries
 
@@ -144,7 +144,7 @@ OpenClaw picks up `openclaw.json` from the repo root automatically — workspace
 | Code execution | OpenClaw sandbox container (bridge network, workdir `/agent`) |
 | Blocked files | `.env`, `openclaw.json` (`fs.deny`); `prepare.py` protected by read-only mount |
 | host_bridge | Reached from sandbox via `host.docker.internal:8765`; whitelisted endpoints only |
-| train.py | Always via bridge — never runs inside sandbox |
+| train.py | Always via bridge - never runs inside sandbox |
 
 ## Running the agent
 
@@ -156,7 +156,7 @@ The agent reads `program.md`, then `prepare.py`, `pipeline.py`, `train.py`, and 
 
 | Tier | File | When to use | Models |
 |---|---|---|---|
-| **1 (always)** | `pipeline.py` | Default — start here | LogisticRegression, Ridge, RF, GBM, XGBoost, LightGBM, Ensembles |
+| **1 (always)** | `pipeline.py` | Default - start here | LogisticRegression, Ridge, RF, GBM, XGBoost, LightGBM, Ensembles |
 | **2 (fallback)** | `train.py` | Only if f1 < 0.70 / r2 < 0.60 after full tuning | TabularMLP (PyTorch, CPU/MPS/CUDA) |
 
 Tree-based methods (XGBoost, LightGBM) outperform neural networks on most tabular datasets. The neural fallback exists for edge cases: very large datasets where tree methods plateau, or high-dimensional numeric features with complex interactions.
@@ -195,22 +195,22 @@ Additional metrics are logged (accuracy, precision, recall, AUC for classificati
 
 **Feature engineering / selection (pipeline.py):** `PolynomialFeatures`, `SelectKBest`, `RFE`, `PCA`, `SMOTE` (imbalanced-learn)
 
-**Neural (train.py):** `TabularMLP` — PyTorch MLP with BatchNorm, GELU activations, dropout, early stopping, cosine LR schedule. Runs on CPU, MPS (Apple Silicon), or CUDA.
+**Neural (train.py):** `TabularMLP` - PyTorch MLP with BatchNorm, GELU activations, dropout, early stopping, cosine LR schedule. Runs on CPU, MPS (Apple Silicon), or CUDA.
 
 ## Project structure
 
 ```
-prepare.py        — constants, auto-detection, EDA, evaluation (do not modify)
-pipeline.py       — Tier 1: sklearn/XGBoost/LightGBM template (copied into tasks/)
-train.py          — Tier 2: PyTorch TabularMLP template (copied into tasks/)
-host_bridge.py    — host-side MPS runner for train.py (port 8765)
-openclaw.json     — OpenClaw workspace, sandbox, and tool config
-program.md        — agent operating rules (human edits)
-pyproject.toml    — Python dependencies
-.env.example      — environment variable template (copy to .env, never commit .env)
-data/             — place your dataset here
-tasks/            — one subdirectory per experiment run (agent writes here)
-eda_report.md     — generated by uv run prepare.py (gitignored)
+prepare.py        - constants, auto-detection, EDA, evaluation (do not modify)
+pipeline.py       - Tier 1: sklearn/XGBoost/LightGBM template (copied into tasks/)
+train.py          - Tier 2: PyTorch TabularMLP template (copied into tasks/)
+host_bridge.py    - host-side MPS runner for train.py (port 8765)
+openclaw.json     - OpenClaw workspace, sandbox, and tool config
+program.md        - agent operating rules (human edits)
+pyproject.toml    - Python dependencies
+.env.example      - environment variable template (copy to .env, never commit .env)
+data/             - place your dataset here
+tasks/            - one subdirectory per experiment run (agent writes here)
+eda_report.md     - generated by uv run prepare.py (gitignored)
 ```
 
 ## Design choices
